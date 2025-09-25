@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 # coding: utf-8
 """
-Kyoko Swap Bot - Revisi
-Perbaikan: estimate_gas lebih robust, decode revert reason, EIP-1559 detection,
-fallback gas handling, parser Kyoko response lebih tolerant.
+Kyoko Swap Bot - Revisi (tambah prompt jeda)
+Perbaikan utama: meminta user input untuk jeda (wait time) antar swap via terminal.
 Bahasa: Indonesian log messages.
 """
 
@@ -32,7 +31,7 @@ def decode_revert_reason(data_hex: str) -> str:
     """
     Decode Solidity revert reason if present.
     Typical ABI-encoded revert: 0x08c379a0 + offset + str_len + str_bytes
-    Returns decoded string or raw hex if can't decode.
+    Returns decoded string or empty string if can't decode.
     """
     try:
         if not data_hex or not isinstance(data_hex, str):
@@ -46,8 +45,7 @@ def decode_revert_reason(data_hex: str) -> str:
         # 0x08c379a0 is Error(string) selector
         if selector != "08c379a0":
             return ""
-        # offset is next 32 bytes, then length, then bytes
-        # skip selector (4) + 32 offset
+        # skip selector (4) + 32 offset; next 32 bytes is string length
         if len(b) < 4 + 32 + 32:
             return ""
         str_len = int.from_bytes(b[4 + 32:4 + 32 + 32], "big")
@@ -405,7 +403,7 @@ class KyokoSwapBot:
         # Sign and send
         try:
             signed = self.w3.eth.account.sign_transaction(tx_final, self.PRIVATE_KEY)
-            tx_hash = self.w3.eth.send_raw_transaction(signed.rawTransaction)
+            tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
             print(f"📝 Swap transaction: {tx_hash.hex()}")
             print("⏳ Nunggu konfirmasi...")
             receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=180)
@@ -464,6 +462,21 @@ class KyokoSwapBot:
             print("❌ Loop count kudu lebih soko 0")
             return
 
+        # PROMPT: ask user for wait_time (in seconds) between swaps
+        try:
+            wt_raw = input("⏱️ Ketik jeda antar swap dalam detik (boleh desimal, ketik 0 untuk tanpa jeda). Contoh '10' atau '2.5': ").strip()
+            if wt_raw == "":
+                wait_time = 10.0  # default sama seperti sebelumnya
+                print(f"ℹ️ Tidak diisi -> menggunakan default wait_time = {wait_time} detik")
+            else:
+                wait_time = float(wt_raw)
+                if wait_time < 0:
+                    print("❌ Jeda tidak boleh negatif. Gunakan 0 atau angka positif.")
+                    return
+        except Exception:
+            print("❌ Input jeda ora bener. Ketik angka (contoh: 10 atau 2.5).")
+            return
+
         try:
             dr = input("🔬 Dry-run mode? (y/n): ").strip().lower()
             if dr == "y":
@@ -475,6 +488,7 @@ class KyokoSwapBot:
         print(f"\n🔁 Konfigurasi Swap:")
         print(f"   Jumlah ETH per swap: {amount_eth}")
         print(f"   Jumlah loop: {loop_count}")
+        print(f"   Jeda antar swap (detik): {wait_time}")
         print(f"   Slippage: {slippage * 100}%")
         print(f"   From: ETH")
         print(f"   To: USDC")
@@ -501,8 +515,8 @@ class KyokoSwapBot:
                 # small delay then continue
                 time.sleep(5)
                 continue
-            if i < loop_count - 1:
-                wait_time = 10
+            # Use user-defined wait_time between swaps (skip after last)
+            if i < loop_count - 1 and wait_time > 0:
                 print(f"⏳ Tunggu {wait_time} detik sebelum swap berikutnya...")
                 time.sleep(wait_time)
 
